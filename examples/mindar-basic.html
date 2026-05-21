@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>AR-Chive MindAR Basic Demo</title>
+  <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
+  <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+</head>
+<body>
+  <a-scene mindar-image="imageTargetSrc: https://cdn.jsdelivr.net/gh/hiukim/mind-ar-js@1.2.5/examples/image-tracking/assets/card-example/card.mind;" embedded>
+    <a-assets>
+      <video id="demoVideo" src="https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny_320x180.mp4" loop autoplay></video>
+    </a-assets>
+    <a-camera position="0 0 0" look-controls="false"></a-camera>
+    <a-entity mindar-image-target="targetIndex: 0">
+      <a-video src="#demoVideo" position="0 0 0.05" width="0.3" height="0.2" rotation="0 0 0"></a-video>
+    </a-entity>
+  </a-scene>
+
+  <script>
+    // Basic target found / lost for gating logic
+    const target = document.querySelector('a-entity[mindar-image-target]');
+    target.addEventListener('targetFound', () => {
+      console.log('Anchor resolved — would request decryption key here');
+      const vid = document.querySelector('#demoVideo');
+      if (vid) (vid as HTMLVideoElement).play();
+    });
+    target.addEventListener('targetLost', () => {
+      console.log('Anchor lost — purge decrypted content');
+    });
+  </script>
+</body>
+</html>
