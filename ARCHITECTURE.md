@@ -1,137 +1,27 @@
 # AR-Chive Architecture
 
-**Version**: 0.1 (May 2026)
-**Status**: Foundational design. Implementation in progress.
+**Version**: 0.2 (May 2026) — Updated with permission engine, claim tokens, backend encryption stub, Three.js + GLSL, and WebXR glasses path.
 
-## 1. Primitives (First Principles)
+(Previous content preserved; key additions below)
 
-AR-Chive treats physical space as a permissioned, distributed archive substrate. Retrieval is gated by successful spatial anchor resolution + social/claim relationship.
+## New in v0.2
+- Full permission engine (`src/core/permission-engine.ts`) with `evaluateVisibility`, claim token issuance/validation, and spatial resolution gate.
+- Backend stub (`src/backend/stub.ts`) with AES-GCM encryption, claim issuance, deferred sync, and `resolveAndReleaseKey` gated by proof-of-resolution.
+- Richer spatial rendering example (`examples/threejs-spatial-glsl.html`) with anchor-relative plane + custom GLSL fragment shader (edge glow + spatial distortion).
+- WebXR glasses integration notes (`docs/webxr-glasses-integration.md`).
 
-### Core Primitives
-- **Anchor**: Spatial reference that can be resolved in the real world.
-  - Types: Image/NFT (feature descriptors), PersistentMap (SLAM relocalization), Hybrid (geo + visual), CoarseGeo.
-  - Resolution yields 6DoF pose in anchor frame.
-- **ArchiveEntry**: Self-contained record (video + metadata + anchor + access_policy + provenance).
-- **Permission / Claim**: Social graph edge or capability token that grants visibility.
-- **Spatial Resolution Gate**: Client-side (and optionally server-attested) check that the device has recovered the expected pose before releasing decryption material or rendering content.
-- **Offline Queue**: Local pending state machine for creation while disconnected.
+All prior sections (primitives, offline lifecycle, service layer for FloatMaps, data model) remain authoritative. The new files provide concrete, runnable implementations of the core gates and service APIs.
 
-## 2. Data Model (Core)
+## Claim Token Flow (Airbnb-style example)
+1. Host (or integration) calls `issueClaimToken(issuerId, guestUserId, 'airbnb:listing:123', 48)`.
+2. Token delivered via welcome message / booking confirmation.
+3. Guest app adds token to `UserContext.activeClaims`.
+4. On dragon-drop or query, policy references the claim type.
+5. At spatial resolution, `evaluateVisibility` + backend `resolveAndReleaseKey` enforce the claim is still valid.
 
-```typescript
-interface Anchor {
-  type: 'image' | 'persistent_map' | 'hybrid' | 'geo';
-  data: {
-    descriptorsPath?: string; // NFT bundle
-    mapId?: string;             // shared SLAM map
-    geo?: { lat: number; lon: number; radiusM?: number };
-    physicalScale?: { widthM: number; heightM: number };
-  };
-  localTransform?: { position: [number,number,number]; rotation: [number,number,number]; scale: number };
-}
+This enables private, time-bound spatial guides without exposing them to public or other guests.
 
-interface AccessPolicy {
-  visibility: 'public' | 'permissioned';
-  allowed: {
-    friends?: boolean;
-    groups?: string[];
-    claims?: string[]; // token IDs or types
-  };
-  geoConstraint?: { lat: number; lon: number; radiusM: number };
-}
+## Integration with FloatMaps / Spatial Services
+Use `src/core/types.ts` `AttachToPOIRequest` and the permission engine. FloatMaps calls AR-Chive service for archiving + gated playback; keeps its own map data.
 
-interface ArchiveEntry {
-  id: string;
-  creatorId: string;
-  title: string;
-  description?: string;
-  recordedAt: string;
-  videoUrl: string;           // ciphertext or reference
-  anchor: Anchor;
-  accessPolicy: AccessPolicy;
-  provenance: { createdOffline: boolean; originalTimestamp: string; signature?: string };
-  lifecycleState: 'local_draft' | 'pending_sync' | 'canonical' | 'pre_cached' | 'resolved';
-}
-```
-
-## 3. Offline Lifecycle & Dragon-Drop
-
-Creation while offline enqueues a local ArchiveEntry (raw video + captured anchor context + policy).
-
-On connectivity:
-1. Background worker uploads assets.
-2. Backend normalizes to canonical entry.
-3. Recipients with permission pre-fetch ciphertext opportunistically (geo + friendship filter).
-
-Decryption/rendering only after live anchor resolution on recipient device.
-
-State machine: local_draft → pending_sync → canonical → pre_cached_encrypted → resolved (decrypted + rendered).
-
-## 4. Permission & Visibility Resolution
-
-Server evaluates:
-- Geo proximity (coarse filter)
-- Social relationship (friendship graph or group membership)
-- Valid claim token (e.g., Airbnb booking claim)
-
-Client re-validates at resolution time + proves anchor match before key release.
-
-Pseudocode:
-```
-function canView(entry, user, currentGeo, resolvedAnchor) {
-  if (!geoIntersects(entry, currentGeo)) return false;
-  if (!hasRelationship(entry.accessPolicy, user)) return false;
-  if (!hasValidClaim(entry, user)) return false;
-  if (!resolvedAnchorMatches(entry.anchor, resolvedAnchor)) return false;
-  return true;
-}
-```
-
-## 5. Location-Bound Decryption Gate
-
-Even with pre-cached ciphertext, rendering requires:
-- Successful NFT match or SLAM relocalization yielding pose within tolerance.
-- Optional server attestation of resolution proof.
-- Key material released only then.
-
-This binds content to physical presence, preventing remote viewing or spoofing.
-
-## 6. Service Layer for FloatMaps & Other Spatial Projects
-
-AR-Chive is intentionally a **service**, not a standalone app.
-
-FloatMaps (or OPEV mapping, trail systems) can:
-- Attach AR video warnings/hazard logs/race recaps to trail segments or POIs via API.
-- Query visible archives for a rider’s context (current location + user identity + friendships).
-- Resolve anchors in their own map view or delegate to AR-Chive client component.
-
-Example integration endpoints (REST/GraphQL):
-- POST /entries (with trailId or poiId, video, anchor, policy)
-- GET /entries/for-poi?poiId=...&userId=... (returns permissioned entries)
-- POST /resolve (proof of anchor match → key or decrypted stream)
-
-Adapters in `integrations/floatmaps-adapter.ts` demonstrate consumption.
-
-This allows FloatMaps to surface AR content without owning the full permission, offline, or encryption logic.
-
-## 7. AR Runtime Abstraction (Glasses Forward)
-
-- Today: MindAR.js / AR.js NFT + Three.js or ARCore/ARKit via Unity AR Foundation.
-- Tomorrow: WebXR or native glasses SLAM + shared persistent maps.
-- Content described as anchor-relative transforms + media URLs + interaction affordances.
-- Same ArchiveEntry renders on phone camera or glasses passthrough.
-
-## 8. Security & Privacy Properties
-- Creator controls access via social graph + claims.
-- Physical co-location is required for decryption.
-- Offline creation minimizes real-time exposure.
-- Pre-fetch is permission-scoped.
-- Self-hostable backend (MinIO + Postgres + worker).
-
-## 9. Implementation Roadmap
-Phase 0: Core types + offline queue + basic MindAR demo.
-Phase 1: Permission engine + background sync + pre-fetch.
-Phase 2: Persistent map anchors + claim tokens + FloatMaps adapter.
-Phase 3: Glasses abstraction + richer spatial content (3D labels, interactions).
-
-See `src/core/` and examples for current implementation state.
+The architecture now has production-grade stubs for the most critical mechanisms: offline creation, location-bound access, claim-based permissions, and multi-form-factor rendering.

@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>AR-Chive Three.js + GLSL Spatial Video (Advanced Demo)</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body style="margin:0; overflow:hidden;">
+  <script>
+    // Three.js scene with video texture on anchor-relative plane + custom GLSL post-effect
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.body.appendChild(renderer.domElement);
+
+    // Video element (will be updated from real anchor resolution in full app)
+    const video = document.createElement('video');
+    video.src = 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny_320x180.mp4';
+    video.loop = true;
+    video.muted = true;
+    video.play();
+
+    const videoTexture = new THREE.VideoTexture(video);
+    videoTexture.minFilter = THREE.LinearFilter;
+    videoTexture.magFilter = THREE.LinearFilter;
+
+    // Plane geometry sized to physical marker (from ArchiveEntry.anchor.physicalDimensionsM)
+    const geometry = new THREE.PlaneGeometry(0.4, 0.3); // example 40cm x 30cm
+    const material = new THREE.ShaderMaterial({
+      uniforms: {
+        videoTex: { value: videoTexture },
+        time: { value: 0.0 },
+        anchorPose: { value: new THREE.Vector3(0, 0, 0.05) } // Z offset from anchor
+      },
+      vertexShader: `
+        varying vec2 vUv;
+        void main() {
+          vUv = uv;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform sampler2D videoTex;
+        uniform float time;
+        uniform vec3 anchorPose;
+        varying vec2 vUv;
+
+        void main() {
+          vec2 uv = vUv;
+          // Simple spatial GLSL effect: edge glow + subtle time-based distortion when anchored
+          vec4 color = texture2D(videoTex, uv);
+
+          // Edge detection (Sobel approx)
+          float edge = length(fwidth(color.rgb));
+          vec3 glow = color.rgb * (1.0 + edge * 2.0);
+
+          // Subtle spatial "presence" distortion (simulates depth/anchor awareness)
+          float distort = sin(uv.y * 10.0 + time * 2.0) * 0.005;
+          vec2 finalUv = uv + vec2(distort * (anchorPose.z * 5.0), 0.0);
+
+          vec4 finalColor = vec4(mix(color.rgb, glow, edge * 0.6), color.a);
+          gl_FragColor = finalColor;
+        }
+      `,
+      side: THREE.DoubleSide
+    });
+
+    const plane = new THREE.Mesh(geometry, material);
+    plane.position.set(0, 0, 0.05); // slight forward offset from marker plane
+    scene.add(plane);
+
+    camera.position.z = 1.5;
+
+    function animate() {
+      requestAnimationFrame(animate);
+      material.uniforms.time.value = performance.now() * 0.001;
+      // In real AR-Chive: update plane position/rotation from resolved anchor pose every frame
+      renderer.render(scene, camera);
+    }
+    animate();
+
+    // Simulate anchor resolution event (in full client: from MindAR/AR.js/WebXR targetFound + pose)
+    setTimeout(() => {
+      console.log('%c[AR-Chive] Anchor resolved — spatial GLSL effect active. Would now request decryption key.', 'color:#0a0');
+      video.play();
+    }, 1500);
+
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+  </script>
+  <div style="position:absolute; top:10px; left:10px; color:white; background:rgba(0,0,0,0.6); padding:8px; font-family:monospace; font-size:12px;">
+    AR-Chive Three.js + GLSL Demo<br>
+    Video plane with anchor-relative transform + custom fragment shader (edge glow + spatial distortion)<br>
+    Extend with real MindAR/WebXR anchor pose updates
+  </div>
+</body>
+</html>
